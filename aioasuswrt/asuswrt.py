@@ -1,5 +1,6 @@
 """Module for Asuswrt."""
 import inspect
+import json
 import logging
 import math
 import re
@@ -20,6 +21,8 @@ _LEASES_REGEX = re.compile(
     r"(?P<ip>([0-9]{1,3}[\.]){3}[0-9]{1,3})\s"
     r"(?P<host>([^\s]+))"
 )
+_CLIENTLIST_CMD = 'cat /tmp/clientlist.json'
+
 
 # Command to get both 5GHz and 2.4GHz clients
 _WL_CMD = (
@@ -318,6 +321,24 @@ class AsusWrt:
                 devices[mac] = Device(mac, device["ip"], host)
         return devices
 
+    async def async_update_hostnames(self, devices):
+        lines = await self.connection.async_run_command(
+            _LEASES_CMD.format(self.dnsmasq))
+        if not lines:
+            return {}
+        lines = [line for line in lines if not line.startswith('duid ')]
+        result = await _parse_lines(lines, _LEASES_REGEX)
+        for device in result:
+            # For leases where the client doesn't set a hostname, ensure it
+            # is blank and not '*', which breaks entity_id down the line.
+            host = device['host']
+            if host == '*':
+                host = ''
+            mac = device['mac'].upper()
+            if mac in devices:
+                devices[mac] = Device(mac, devices[mac].ip, host)
+
+
     async def async_get_neigh(self, cur_devices):
         """Gets neigh"""
         lines = await self.connection.async_run_command(_IP_NEIGH_CMD)
@@ -363,16 +384,19 @@ class AsusWrt:
         ):
             return self._devices_cache
 
+        lines = await self.connection.async_run_command(_CLIENTLIST_CMD, splitnewline=False)
+        if not lines:
+            return {}
+
         devices = {}
-        dev = await self.async_get_wl()
-        devices.update(dev)
-        dev = await self.async_get_arp()
-        devices.update(dev)
-        dev = await self.async_get_neigh(devices)
-        devices.update(dev)
-        if not self.mode == "ap":
-            dev = await self.async_get_leases(devices)
-            devices.update(dev)
+        dev_list = json.loads(lines)
+        for if_mac in dev_list.keys():
+            for conn_type in dev_list[if_mac].keys():
+                for dev_mac in dev_list[if_mac][conn_type].keys():
+                    devices[dev_mac] = Device(dev_mac, dev_list[if_mac][conn_type][dev_mac]['ip'], None)
+
+        if not self.mode == 'ap':
+            await self.async_update_hostnames(devices)
 
         ret_devices = {}
         for key in devices:
