@@ -393,6 +393,8 @@ class AsusWrt:
         for if_mac in dev_list.keys():
             for conn_type in dev_list[if_mac].keys():
                 for dev_mac in dev_list[if_mac][conn_type].keys():
+                    if dev_list[if_mac][conn_type][dev_mac]['ip'] == '':
+                        dev_list[if_mac][conn_type][dev_mac]['ip'] = None
                     devices[dev_mac] = Device(dev_mac, dev_list[if_mac][conn_type][dev_mac]['ip'], None)
 
         if not self.mode == 'ap':
